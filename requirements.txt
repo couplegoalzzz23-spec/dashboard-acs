@@ -1,0 +1,116 @@
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+
+# 1. Konfigurasi Halaman Web Dashboard
+st.set_page_config(page_title="Dashboard ACS Temperatur", layout="wide", page_icon="🌡️")
+
+st.title("Dashboard Aerodrome Climatological Summary (ACS)")
+st.subheader("Analisis Persentase Temperatur Bulanan Periode 2021-2025")
+st.markdown("---")
+
+# 2. Konfigurasi Parameter & File Sumber
+file_path = 'Persentase_Temp_2021-2025.xlsx'
+
+# Mapping kategori temperatur beserta warna representatifnya
+category_config = {
+    '5 - 0': 'blue',
+    '0 - 5': 'lightblue',
+    '5 - 10': 'teal',
+    '10 - 15': 'green',
+    '15 - 20': 'lime',
+    '20 - 25': 'orange',
+    '25 - 30': 'darkorange',
+    '30 - 35': 'red',
+    '> 35': 'purple'
+}
+
+months = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 
+          'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember']
+
+# 3. Fungsi Cerdas Mengambil Data MEAN Secara Dinamis
+@st.cache_data
+def load_acs_temperature():
+    # Membuat kontainer data kosong untuk setiap kategori
+    data_kategori = {k: [] for k in category_config.keys()}
+    
+    try:
+        xls = pd.ExcelFile(file_path)
+        actual_sheets = xls.sheet_names
+    except Exception as e:
+        st.error(f"Gagal membaca file Excel: {e}")
+        return pd.DataFrame()
+
+    for month in months:
+        # Menyamakan nama sheet (case-insensitive)
+        matched_sheet = next((s for s in actual_sheets if s.strip().lower() == month.lower()), None)
+        
+        if matched_sheet:
+            try:
+                # Membaca sheet tanpa header agar indeks kolom berupa angka (0, 1, 2...)
+                df = pd.read_excel(file_path, sheet_name=matched_sheet, header=None)
+                
+                # MENCARI BARIS MEAN PERIODE 2021-2025
+                # Mencari semua baris yang kolom pertamanya (indeks 0) berisi tulisan 'MEAN'
+                mean_rows = df[df[0].astype(str).str.strip().str.upper() == 'MEAN'].index.tolist()
+                
+                if mean_rows:
+                    # Karena tabel 2021-2025 berada di paling bawah, kita ambil baris 'MEAN' yang terakhir
+                    target_row = mean_rows[-1]
+                    
+                    # Ambil nilai persentase untuk setiap kategori berdasarkan indeks kolom (1 sampai 9)
+                    for idx, kategori in enumerate(category_config.keys(), start=1):
+                        val = df.iloc[target_row, idx]
+                        # Validasi data kosong atau anomali
+                        if pd.isna(val) or (isinstance(val, (int, float)) and val > 100):
+                            val = 0.0
+                        data_kategori[kategori].append(round(float(val), 2))
+                else:
+                    # Jika tidak ditemukan baris MEAN
+                    for kategori in category_config.keys():
+                        data_kategori[kategori].append(0.0)
+            except Exception:
+                for kategori in category_config.keys():
+                    data_kategori[kategori].append(0.0)
+        else:
+            # Jika sheet bulan tidak ditemukan
+            for kategori in category_config.keys():
+                data_kategori[kategori].append(0.0)
+                
+    return pd.DataFrame(data_kategori, index=months)
+
+# Eksekusi pemuatan data
+df_plot = load_acs_temperature()
+
+# 4. Rendering Visualisasi ke Halaman Web
+if not df_plot.empty:
+    st.markdown("### 📊 Grafik Interaktif Garis Tren")
+    
+    # Membuat Line Chart Interaktif dengan Plotly
+    fig = px.line(df_plot, 
+                  x=df_plot.index, 
+                  y=df_plot.columns, 
+                  markers=True,
+                  color_discrete_map=category_config,
+                  labels={'index': 'Bulan', 'value': 'Persentase Kejadian (%)', 'variable': 'Rentang Suhu (°C)'})
+    
+    # Optimasi tampilan grafik agar responsif dan bersih
+    fig.update_layout(
+        hovermode="x unified",  # Mengarahkan kursor ke satu bulan akan memunculkan info semua kategori
+        legend_title_text='Kategori Temperatur',
+        yaxis=dict(title="Persentase Kejadian (%)", gridcolor='rgba(200, 200, 200, 0.3)'),
+        xaxis=dict(title="Bulan", gridcolor='rgba(200, 200, 200, 0.3)'),
+        plot_bgcolor='rgba(0,0,0,0)',
+        height=600
+    )
+    
+    # Menampilkan grafik di web
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Menampilkan Tabel Data Di Bagian Bawah
+    st.markdown("---")
+    st.markdown("### 📋 Tabel Data Persentase Rata-Rata Kejadian (%)")
+    st.dataframe(df_plot.style.format("{:.2f}"), use_container_width=True)
+
+else:
+    st.warning("Gagal memproses data. Pastikan file 'Persentase_Temp_2021-2025.xlsx' sudah diunggah ke GitHub.")
