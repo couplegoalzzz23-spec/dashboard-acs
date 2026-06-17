@@ -1,138 +1,83 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
+import plotly.graph_objects as go
 
-# ==========================================
-# 1. KONFIGURASI HALAMAN
-# ==========================================
-st.set_page_config(
-    page_title="Dashboard ACS Temperatur",
-    page_icon="🌡️",
-    layout="wide"
+# --- 1. SIMULASI DATA / MEMBACA DATA ---
+# (Sesuaikan bagian ini dengan cara Anda memuat data CSV asli)
+@st.cache_data
+def load_sample_data():
+    # Contoh struktur data Model C (Cloud Height Frequencies)
+    hours = list(range(24))
+    data = {
+        'TIME (GMT)': hours,
+        '< 150 ft': [0,0,0,1,2,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+        '< 200 ft': [0,0,0,0,1,3,2,1,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0],
+        '< 300 ft': [1,0,0,0,2,4,3,1,1,0,0,0,1,2,1,0,0,0,0,0,1,1,1,0],
+        '< 500 ft': [1,0,1,2,4,5,3,2,1,0,1,2,2,3,2,1,0,0,1,2,3,2,2,1],
+        '< 1000 ft': [7,9,12,7,8,5,3,1,0,0,0,0,1,2,1,0,0,0,1,1,2,3,4,5],
+        '< 1500 ft': [24,29,30,30,30,30,29,27,24,23,24,23,23,21,20,18,15,12,11,13,14,12,12,11]
+    }
+    return pd.DataFrame(data)
+
+df = load_sample_data()
+
+# --- 2. KONFIGURASI DASHBOARD INTERAKTIF ---
+st.title("📊 Aerodrome Climatological Summary Interactive Matrix")
+st.write("Visualisasi interaktif frekuensi kejadian berdasarkan jam operasi.")
+
+# Fitur Informatif: Pilihan Konversi Waktu (Sangat penting untuk operasional penerbangan)
+time_mode = st.radio("Pilih Format Waktu:", ["GMT (UTC)", "Lokal (WIB / UTC+7)"], horizontal=True)
+
+# Salinan data untuk manipulasi visual
+plot_df = df.copy()
+
+if time_mode == "Lokal (WIB / UTC+7)":
+    # Menggeser jam (+7 jam untuk WIB)
+    plot_df['TIME (GMT)'] = (plot_df['TIME (GMT)'] + 7) % 24
+    plot_df = plot_df.sort_values(by='TIME (GMT)').reset_index(drop=True)
+    time_label = "Jam (Lokal/WIB)"
+else:
+    time_label = "Jam (GMT)"
+
+# Ekstrak kolom kategori (mengabaikan kolom waktu)
+categories = [col for col in plot_df.columns if col != 'TIME (GMT)']
+
+# --- 3. PEMBUATAN PLOTLY HEATMAP ---
+# Menggunakan graph_objects untuk kontrol penuh tata letak
+fig = go.Figure(data=go.Heatmap(
+    z=plot_df[categories].values,                           # Nilai persentase/frekuensi
+    x=categories,                                           # Sumbu X (Kategori Tinggi/Suhu)
+    y=plot_df['TIME (GMT)'].astype(str) + ":00",            # Sumbu Y (Waktu sebagai String agar rapi)
+    colorscale='YlGnBu',                                    # Palet warna profesional (Kuning-Hijau-Biru)
+    reversescale=False,
+    hoverongaps=False,
+    hovertemplate=(
+        "<b>" + time_label + ": %{y}</b><br>" +
+        "Kategori: %{x}<br>" +
+        "Frekuensi: %{z}%<extra></extra>"                  # Tampilan informasi saat kursor digeser
+    )
+))
+
+# Kustomisasi Desain Layout agar mirip standar visualisasi modern
+fig.update_layout(
+    title=f"Matriks Distribusi Frekuensi ({time_mode})",
+    xaxis_title="Rentang Parameter / Spesifikasi",
+    yaxis_title=time_label,
+    yaxis=dict(autorange="reversed"),                      # Jam diurutkan dari atas (00:00) ke bawah
+    xaxis=dict(side="top"),                                 # Meletakkan label kategori di atas seperti tabel asli
+    height=600,
+    margin=dict(l=50, r=50, b=30, t=100),
 )
 
-st.title("📊 Aerodrome Climatological Summary (ACS)")
-st.subheader("Persentase Kejadian Temperatur Bulanan (2021-2025)")
+# Menampilkan di Streamlit
+st.plotly_chart(fig, use_container_width=True)
+
+# --- 4. INSIGHT CARD (INFORMASI TAMBAHAN) ---
 st.markdown("---")
-
-# ==========================================
-# 2. FUNGSI PEMBACAAN DATA "TAHAN BANTING"
-# ==========================================
-@st.cache_data(show_spinner="Memproses data Excel...")
-def load_and_process_data(uploaded_file):
-    months = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember']
-    categories = ['5 - 0', '0 - 5', '5 - 10', '10 - 15', '15 - 20', '20 - 25', '25 - 30', '30 - 35', '> 35']
-    
-    # Menyiapkan dictionary untuk menampung data yang sudah dirapikan
-    summary_data = []
-    
-    try:
-        # Membaca seluruh sheet dalam Excel
-        xls = pd.ExcelFile(uploaded_file)
-        
-        for month in months:
-            # Memastikan sheet bulan tersebut ada di dalam file
-            if month in xls.sheet_names:
-                df = pd.read_excel(xls, sheet_name=month, header=None)
-                
-                # FITUR TAHAN BANTING: 
-                # Daripada memaku pada baris 250 (yang bisa error jika data meleset),
-                # kita cari baris yang di kolom pertamanya mengandung kata "MEAN" atau "RATA-RATA"
-                mean_row_data = None
-                for idx in range(len(df)):
-                    cell_val = str(df.iloc[idx, 0]).strip().upper()
-                    if 'MEAN' in cell_val or 'RATA' in cell_val:
-                        mean_row_data = df.iloc[idx, 1:10].values
-                        break
-                
-                # Fallback: Jika kata MEAN tidak ditemukan, coba ambil baris 250 sesuai script aslimu
-                if mean_row_data is None:
-                    try:
-                        mean_row_data = df.iloc[250, 1:10].values
-                    except IndexError:
-                        # Jika baris 250 tidak ada, isi dengan 0
-                        mean_row_data = [0] * 9
-                
-                # Membersihkan dan membulatkan data
-                cleaned_values = []
-                for val in mean_row_data:
-                    try:
-                        cleaned_values.append(round(float(val), 2))
-                    except (ValueError, TypeError):
-                        cleaned_values.append(0.0)
-                        
-                # Memasukkan ke list rekap
-                summary_data.append([month] + cleaned_values)
-                
-        # Membuat DataFrame rapi dari hasil ekstraksi
-        df_summary = pd.DataFrame(summary_data, columns=['Bulan'] + categories)
-        return df_summary
-
-    except Exception as e:
-        st.error(f"Terjadi kesalahan saat membaca file: {e}")
-        return pd.DataFrame()
-
-# ==========================================
-# 3. ANTARMUKA UPLOAD & TAMPILAN
-# ==========================================
-st.sidebar.header("📁 Upload Data")
-st.sidebar.markdown("Silakan unggah file `Persentase_Temp_2021-2025.xlsx`")
-uploaded_file = st.sidebar.file_uploader("Upload Excel ACS", type=['xlsx'])
-
-if uploaded_file is not None:
-    # Memproses data
-    df_plot = load_and_process_data(uploaded_file)
-    
-    if not df_plot.empty:
-        # Mengubah bentuk data (Melt) agar cocok dibaca oleh Plotly Express
-        df_melted = df_plot.melt(
-            id_vars=['Bulan'], 
-            value_vars=df_plot.columns[1:], 
-            var_name='Kategori Temperatur', 
-            value_name='Persentase (%)'
-        )
-        
-        # --- A. VISUALISASI GRAFIK INTERAKTIF ---
-        st.markdown("### 📈 Grafik Fluktuasi Temperatur")
-        
-        fig = px.line(
-            df_melted, 
-            x='Bulan', 
-            y='Persentase (%)', 
-            color='Kategori Temperatur',
-            markers=True, # Menambahkan titik pada setiap bulan
-            color_discrete_sequence=px.colors.qualitative.Set1
-        )
-        
-        fig.update_layout(
-            xaxis_title="Bulan",
-            yaxis_title="Persentase Kejadian (%)",
-            hovermode="x unified", # Menampilkan tooltip interaktif saat di-hover
-            legend_title="Kategori (°C)",
-            plot_bgcolor='rgba(0,0,0,0)',
-            margin=dict(l=0, r=0, t=30, b=0)
-        )
-        
-        fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='LightGray')
-        fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='LightGray')
-        
-        # Menampilkan grafik di Streamlit
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # --- B. TABEL DATA INFORMATIF ---
-        st.markdown("---")
-        st.markdown("### 📋 Tabel Detail Persentase Kejadian (%)")
-        st.markdown("Tabel di bawah ini menampilkan rincian data per bulan. Anda bisa mengklik judul kolom untuk mengurutkan data.")
-        
-        # Mengatur index menjadi Bulan agar tampilan tabel lebih rapi
-        df_display = df_plot.set_index('Bulan')
-        
-        # Menampilkan tabel interaktif bawaan Streamlit
-        st.dataframe(
-            df_display, 
-            use_container_width=True,
-            height=450 # Mengatur tinggi agar semua bulan terlihat tanpa scroll berlebih
-        )
-        
-else:
-    st.info("👈 Menunggu file Excel diunggah dari panel sebelah kiri. Pastikan nama sheet di dalam file adalah nama-nama bulan (Januari, Februari, dst).")
+### 💡 Informasi Operasional Utama
+col1, col2 = st.columns(2)
+with col1:
+    max_val = plot_df[categories].values.max()
+    st.metric(label="Frekuensi Tertinggi dalam Matriks", value=f"{max_val}%")
+with col2:
+    st.info("Warna yang lebih gelap menunjukkan probabilitas kejadian atau persistensi fenomena yang lebih tinggi pada jam tersebut.")
