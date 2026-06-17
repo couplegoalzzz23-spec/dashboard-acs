@@ -4,32 +4,37 @@ import plotly.express as px
 from pathlib import Path
 
 # ==========================================
-# CONFIG & INITIALIZATION
+# 1. KONFIGURASI HALAMAN UTAMA
 # ==========================================
 st.set_page_config(
     page_title="Dashboard ACS Interaktif", 
-    page_icon="📊", 
+    page_icon="✈️", 
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-st.title("✈️ Aerodrome Climatological Summary (ACS) Dashboard")
-st.markdown("### Analisis Data Klimatologi Operasional Penerbangan (Periode 2021 - 2025)")
+# Judul yang disesuaikan untuk konteks operasional penerbangan
+st.title("✈️ Dashboard Aerodrome Climatological Summary (ACS)")
+st.markdown("### Visualisasi Data Klimatologi Operasional (Periode 2021 - 2025)")
 st.markdown("---")
 
-# Menggunakan pathlib agar pembacaan folder aman di OS Windows maupun Linux (Server Streamlit)
+# ==========================================
+# 2. DEFINISI JALUR FOLDER (ANTI-EROR OS)
+# ==========================================
+# Ini memastikan skrip selalu mencari di dalam folder "data" yang ada di root yang sama
 BASE_DIR = Path(__file__).parent
 DATA_DIR = BASE_DIR / "data"
 
 # ==========================================
-# SIDEBAR NAVIGATION & MAPPING
+# 3. NAVIGASI & MAPPING FILE EXCEL
 # ==========================================
-st.sidebar.header("📁 Navigasi Data")
+st.sidebar.header("📁 Parameter Meteorologi")
 
-# Mapping nama opsi yang rapi ke nama file asli di folder data Anda
+# Nama di kiri (kunci) adalah yang tampil di web.
+# Nama di kanan (nilai) WAJIB SAMA PERSIS dengan nama file di folder "data" GitHub.
 FILE_MAPPING = {
-    "Rata-rata Kejadian Masuk (RH)": "rata_rata_jumlah_kejadian_masuk_rh_2021_2025.xlsx",
-    "Rata-rata Kejadian Masuk (Tmax/Tmin)": "rata_rata_jumlah_kejadian_masuk_tmaxmin_2021_2025.xlsx",
+    "Jumlah Kejadian Masuk (RH)": "rata_rata_jumlah_kejadian_masuk_rh_2021_2025.xlsx",
+    "Jumlah Kejadian Masuk (Tmax/Tmin)": "rata_rata_jumlah_kejadian_masuk_tmaxmin_2021_2025.xlsx",
     "Persentase Heiligenschein (HS)": "rata_rata_persentase_hs_2021_2025.xlsx",
     "Persentase Temperatur": "rata_rata_persentase_temperature_2021_2025.xlsx",
     "Persentase Visibility": "rata_rata_persentase_visibility_2021_2025.xlsx",
@@ -37,104 +42,89 @@ FILE_MAPPING = {
 }
 
 pilihan_parameter = st.sidebar.selectbox(
-    "Pilih Parameter ACS yang Ingin Dianalisis:",
+    "Pilih Parameter ACS:",
     options=list(FILE_MAPPING.keys())
 )
 
+# Menentukan file yang akan dibaca
 file_terpilih = FILE_MAPPING[pilihan_parameter]
 FULL_PATH = DATA_DIR / file_terpilih
 
 # ==========================================
-# ROBUST DATA LOADING FUNCTION (SAFE ENGINE)
+# 4. FUNGSI MEMBACA DATA (DENGAN CACHE & PROTEKSI)
 # ==========================================
-@st.cache_data(show_spinner="Sedang memuat data dari database...", ttl=3600)
-def load_and_clean_data(file_path: Path):
-    """
-    Fungsi membaca Excel dengan proteksi eror format.
-    Mencegah eror akibat adanya spasi gaib pada nama kolom di Excel.
-    """
+@st.cache_data(show_spinner="Memuat data ACS...", ttl=3600)
+def load_data(file_path: Path):
     if not file_path.exists():
-        raise FileNotFoundError(f"File tidak ditemukan di folder data: {file_path.name}")
-        
-    # Membaca excel menggunakan engine openpyxl (paling stabil untuk .xlsx)
+        raise FileNotFoundError(f"File tidak ditemukan: {file_path.name}")
+    
+    # Engine openpyxl wajib digunakan untuk file .xlsx agar tahan banting
     df = pd.read_excel(file_path, engine="openpyxl")
     
-    # PEMBERSIHAN DATA (Anti-Eror Masa Depan):
-    # Menghapus spasi di awal/akhir nama kolom jika ada ketidaksengajaan saat input data
+    # Pembersihan otomatis: menghapus spasi gaib di nama kolom
     df.columns = [str(col).strip() for col in df.columns]
-    
     return df
 
 # ==========================================
-# MAIN APP LOGIC WITH ERROR HANDLING (TRY-EXCEPT)
+# 5. LOGIKA UTAMA & VISUALISASI
 # ==========================================
 try:
-    # Memuat data secara aman
-    df = load_and_clean_data(FULL_PATH)
+    # Eksekusi pembacaan data
+    df = load_data(FULL_PATH)
     
-    # Menampilkan Informasi Ringkas di Atas
-    st.subheader(f"📊 Tabel Data Terbuka: {pilihan_parameter}")
-    
-    # Fitur pencarian/filter cepat bawaan Streamlit
+    st.subheader(f"📊 Tabel Data Mentah: {pilihan_parameter}")
     st.dataframe(df, use_container_width=True)
     
     st.markdown("---")
-    st.subheader("📈 Visualisasi Grafik Interaktif")
+    st.subheader("📈 Analisis Grafik Interaktif")
     
-    # Ambil daftar semua kolom yang tersedia di file Excel terpilih
     daftar_kolom = list(df.columns)
     
+    # Syarat membuat grafik minimal ada 2 kolom
     if len(daftar_kolom) >= 2:
-        # PENCEGAHAN CRASH GRAFIK: 
-        # Coba deteksi kolom waktu otomatis (Bulan/Jam/Waktu), jika tidak ada pasang kolom pertama
-        kandidat_x = [c for c in daftar_kolom if c.lower() in ['bulan', 'jam', 'waktu', 'tanggal', 'periode']]
-        idx_default_x = daftar_kolom.index(kandidat_x[0]) if kandidat_x else 0
+        # Menyiapkan dropdown cerdas agar pengguna bisa mengatur sumbu X dan Y sendiri
+        # Ini mencegah eror jika nama kolom di Excel Anda tidak lazim
+        col_x, col_y, col_jenis = st.columns(3)
         
-        # Coba deteksi kandidat sumbu Y (kolom selain X)
-        kandidat_y = [c for c in daftar_kolom if c not in kandidat_x]
-        idx_default_y = daftar_kolom.index(kandidat_y[0]) if kandidat_y else (1 if len(daftar_kolom) > 1 else 0)
-        
-        # Biarkan user memilih sumbu secara dinamis jika struktur kolom Excel berubah di masa depan
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            sumbu_x = st.selectbox("Sumbu X (Horizontal):", options=daftar_kolom, index=idx_default_x, key="sb_x")
-        with col2:
-            sumbu_y = st.selectbox("Sumbu Y (Vertikal/Nilai):", options=daftar_kolom, index=idx_default_y, key="sb_y")
-        with col3:
-            jenis_grafik = st.selectbox("Model Grafik:", options=["Garis (Line Chart)", "Batang (Bar Chart)", "Area Chart"])
+        with col_x:
+            # Sumbu X biasanya Bulan/Waktu (default ke kolom pertama)
+            sumbu_x = st.selectbox("Sumbu X (Kategori/Waktu):", options=daftar_kolom, index=0)
             
-        # Membuat grafik menggunakan Plotly secara dinamis
-        if jenis_grafik == "Garis (Line Chart)":
-            fig = px.line(df, x=sumbu_x, y=sumbu_y, title=f"Tren {sumbu_y} berdasarkan {sumbu_x}", markers=True)
-        elif jenis_grafik == "Batang (Bar Chart)":
+        with col_y:
+            # Sumbu Y biasanya nilai/parameter (default ke kolom kedua)
+            sumbu_y = st.selectbox("Sumbu Y (Nilai Parameter):", options=daftar_kolom, index=1)
+            
+        with col_jenis:
+            jenis_grafik = st.selectbox("Model Tampilan Grafik:", options=["Grafik Garis", "Grafik Batang", "Grafik Area"])
+            
+        # Membuat Plotly Chart berdasarkan pilihan
+        if jenis_grafik == "Grafik Garis":
+            fig = px.line(df, x=sumbu_x, y=sumbu_y, markers=True, title=f"Tren {sumbu_y} terhadap {sumbu_x}")
+        elif jenis_grafik == "Grafik Batang":
             fig = px.bar(df, x=sumbu_x, y=sumbu_y, title=f"Perbandingan {sumbu_y} berdasarkan {sumbu_x}")
         else:
-            fig = px.area(df, x=sumbu_x, y=sumbu_y, title=f"Distribusi Area {sumbu_y} berdasarkan {sumbu_x}")
+            fig = px.area(df, x=sumbu_x, y=sumbu_y, title=f"Distribusi Area {sumbu_y} terhadap {sumbu_x}")
             
-        # Kustomisasi tampilan grafik agar serasi dan modern
+        # Kustomisasi tampilan agar rapi
         fig.update_layout(
             hovermode="x unified",
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
-            margin=dict(l=40, r=40, t=50, b=40)
+            xaxis_title=sumbu_x,
+            yaxis_title=sumbu_y,
+            margin=dict(l=20, r=20, t=40, b=20)
         )
         
-        # Tampilkan grafik ke web
+        # Tampilkan grafik
         st.plotly_chart(fig, use_container_width=True)
         
     else:
-        st.warning("⚠️ File Excel ini memiliki kurang dari 2 kolom, tidak dapat diubah menjadi grafik tren.")
+        st.warning("⚠️ Data di dalam Excel ini kurang dari 2 kolom, tidak dapat divisualisasikan menjadi grafik.")
 
+# ==========================================
+# 6. PENANGANAN EROR (ERROR HANDLING)
+# ==========================================
 except FileNotFoundError as e:
-    st.error(f"❌ **Eror Infrastruktur:** {e}")
-    st.info("💡 Bereskan dengan memastikan nama file di folder `data/` pada GitHub sama persis dengan kode mapping.")
-
+    st.error(f"❌ **Gagal Memuat File:** {e}")
+    st.info("💡 Pastikan nama file di `FILE_MAPPING` (di dalam app.py) sama persis hurufnya dengan nama file di folder `data/`.")
 except Exception as e:
-    st.error(f"⚠️ **Terjadi Kesalahan Teknis:** {e}")
-    st.info("💡 Sistem tetap berjalan aman. Eror ini biasanya disebabkan oleh struktur isi sheet Excel yang tidak standar.")
-
-# ==========================================
-# FOOTER DASHBOARD
-# ==========================================
-st.markdown("---")
-st.caption("Dashboard ACS v2.0 • Dilindungi sistem proteksi modular anti-crash.")
+    st.error(f"⚠️ **Terjadi Kesalahan Pembacaan Data:** {e}")
+    st.info("💡 Periksa format file Excel Anda, pastikan tidak ada sel yang rusak atau berantakan.")
