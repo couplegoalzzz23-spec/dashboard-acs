@@ -32,7 +32,10 @@ st.markdown("""
 def load_local_data(filepath):
     """Fungsi tahan banting untuk membaca excel"""
     try:
+        # Membaca data excel
         df = pd.read_excel(filepath)
+        # Mengubah seluruh nama kolom menjadi string untuk mencegah error PyArrow
+        df.columns = df.columns.astype(str)
         return df
     except Exception as e:
         return None
@@ -40,7 +43,8 @@ def load_local_data(filepath):
 # ==========================================
 # 3. SIDEBAR & NAVIGASI PENGGUNA
 # ==========================================
-st.sidebar.image("https://upload.wikimedia.org/wikipedia/commons/e/e0/Lambang_TNI_AU.png", width=100) # Bisa diganti logo Lanud RSN jika ada URL-nya
+# Logo TNI AU (Bisa diganti URL logo Lanud RSN jika ada)
+st.sidebar.image("https://upload.wikimedia.org/wikipedia/commons/e/e0/Lambang_TNI_AU.png", width=100)
 st.sidebar.title("Command Center")
 st.sidebar.markdown("**Lanud Roesmin Nurjadin**")
 st.sidebar.markdown("---")
@@ -80,7 +84,11 @@ if menu == "📊 Data Historis Cuaca (2021-2025)":
                 with tab1:
                     # Asumsi dinamis: Kolom 1 adalah index (misal: Tahun/Bulan), sisanya adalah value
                     kolom_x = df.columns[0]
-                    kolom_y = st.multiselect("Pilih variabel untuk ditampilkan di grafik:", df.columns[1:], default=df.columns[1:].tolist())
+                    kolom_y = st.multiselect(
+                        "Pilih variabel untuk ditampilkan di grafik:", 
+                        df.columns[1:], 
+                        default=df.columns[1:].tolist()
+                    )
                     
                     if kolom_y:
                         # Membuat grafik garis interaktif (Line Chart)
@@ -96,30 +104,30 @@ if menu == "📊 Data Historis Cuaca (2021-2025)":
                         fig.update_layout(
                             legend_title_text='Parameter',
                             hovermode="x unified",
-                            xaxis_title=kolom_x.capitalize(),
+                            xaxis_title=str(kolom_x).capitalize(),
                             yaxis_title="Nilai/Jumlah"
                         )
-                        # Gunakan container width agar responsif di HP/Tablet
                         st.plotly_chart(fig, use_container_width=True)
                     else:
                         st.warning("Silakan pilih minimal satu variabel untuk menampilkan grafik.")
                 
                 with tab2:
-                    st.dataframe(df, use_container_width=True)
+                    # Mengubah df ke string agar bebas dari error PyArrow tipe data campuran
+                    st.dataframe(df.astype(str))
                     
             else:
                 st.error("Gagal membaca file atau file kosong. Pastikan format Excel sudah benar.")
         else:
             st.warning("Tidak ada file Excel (.xlsx) di dalam folder 'data'.")
     else:
-        st.error("Folder 'data' tidak ditemukan di dalam repository.")
+        st.error("Folder 'data' tidak ditemukan di dalam repository. Pastikan huruf besar/kecilnya sama (harus 'data').")
 
 # ==========================================
 # 5. HALAMAN UPLOAD MANUAL (FILE ACS)
 # ==========================================
 elif menu == "📤 Analisis Data Manual (ACS)":
     st.subheader("Modul Analisis Berkas Mandiri")
-    st.markdown("Fasilitas ini digunakan untuk mengunggah dan menganalisis laporan/data operasional (Excel/CSV) secara *real-time* tanpa perlu menyimpan ke *database*.")
+    st.markdown("Fasilitas ini digunakan untuk mengunggah dan menganalisis laporan/data operasional secara *real-time*.")
     
     # Widget Upload
     uploaded_file = st.file_uploader("Unggah File Data ACS (Format: .xlsx, .xls, .csv)", type=['xlsx', 'xls', 'csv'])
@@ -132,6 +140,9 @@ elif menu == "📤 Analisis Data Manual (ACS)":
             else:
                 df_upload = pd.read_excel(uploaded_file)
             
+            # Pastikan nama kolom berformat string
+            df_upload.columns = df_upload.columns.astype(str)
+            
             st.success(f"File '{uploaded_file.name}' berhasil dimuat!")
             
             # Layout dinamis
@@ -139,21 +150,23 @@ elif menu == "📤 Analisis Data Manual (ACS)":
             
             with col1:
                 st.write("**Pratinjau Data:**")
-                st.dataframe(df_upload.head(10), use_container_width=True)
+                # Mengubah head ke string untuk mencegah error PyArrow
+                st.dataframe(df_upload.head(15).astype(str))
                 
             with col2:
                 st.write("**Pengaturan Visualisasi:**")
-                # Pemilihan axis dinamis oleh user
                 all_columns = df_upload.columns.tolist()
-                x_axis = st.selectbox("Pilih Kolom untuk Sumbu X (Garis Horizontal):", all_columns)
-                y_axis = st.selectbox("Pilih Kolom untuk Sumbu Y (Garis Vertikal):", all_columns, index=1 if len(all_columns)>1 else 0)
+                
+                # Pemilihan axis dinamis oleh user
+                x_axis = st.selectbox("Pilih Kolom Sumbu X (Horizontal):", all_columns)
+                y_axis = st.selectbox("Pilih Kolom Sumbu Y (Vertikal):", all_columns, index=1 if len(all_columns)>1 else 0)
                 jenis_grafik = st.radio("Pilih Jenis Grafik:", ["Garis (Line)", "Batang (Bar)"], horizontal=True)
                 
                 if st.button("Buat Grafik"):
                     if jenis_grafik == "Garis (Line)":
-                        fig_up = px.line(df_upload, x=x_axis, y=y_axis, markers=True, template="plotly_dark" if "Gelap" in st.get_option("theme.base") else "plotly_white")
+                        fig_up = px.line(df_upload, x=x_axis, y=y_axis, markers=True, template="plotly_white")
                     else:
-                        fig_up = px.bar(df_upload, x=x_axis, y=y_axis, template="plotly_dark" if "Gelap" in st.get_option("theme.base") else "plotly_white")
+                        fig_up = px.bar(df_upload, x=x_axis, y=y_axis, template="plotly_white")
                         
                     fig_up.update_layout(title=f"Grafik {y_axis} berdasarkan {x_axis}")
                     st.plotly_chart(fig_up, use_container_width=True)
