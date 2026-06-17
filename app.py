@@ -4,7 +4,7 @@ import plotly.express as px
 import os
 
 # ==========================================
-# 1. KONFIGURASI HALAMAN & TEMA
+# 1. KONFIGURASI HALAMAN
 # ==========================================
 st.set_page_config(
     page_title="Dashboard Operasional Lanud RSN",
@@ -13,37 +13,46 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Kustomisasi CSS agar tampilan bersih, profesional, bergaya militer (Navy/Dark Blue)
 st.markdown("""
     <style>
     .main {background-color: #f8f9fa;}
     h1, h2, h3 {color: #1a237e;}
-    .stAlert {border-radius: 5px;}
-    /* Menyembunyikan menu bawaan streamlit agar lebih rapi */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     </style>
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. FUNGSI LOAD DATA (DENGAN CACHE)
+# 2. FUNGSI PEMBERSIH DATA (TAHAN BANTING)
 # ==========================================
+def clean_dataframe(df):
+    """Membersihkan data agar PyArrow dan Plotly tidak crash"""
+    # 1. Pastikan semua nama kolom adalah string
+    df.columns = df.columns.astype(str)
+    
+    # 2. Cek setiap kolom, jika tipenya campuran/teks (object), paksa jadi string murni
+    for col in df.columns:
+        if df[col].dtype == 'object':
+            df[col] = df[col].astype(str)
+        else:
+            # Jika angka, biarkan tetap angka (agar grafik bisa dibaca)
+            df[col] = pd.to_numeric(df[col], errors='ignore')
+            
+    return df
+
 @st.cache_data(show_spinner=False)
 def load_local_data(filepath):
-    """Fungsi tahan banting untuk membaca excel"""
     try:
-        # Membaca data excel
-        df = pd.read_excel(filepath)
-        # Mengubah seluruh nama kolom menjadi string untuk mencegah error PyArrow
-        df.columns = df.columns.astype(str)
-        return df
+        # Gunakan engine openpyxl secara eksplisit
+        df = pd.read_excel(filepath, engine='openpyxl')
+        return clean_dataframe(df)
     except Exception as e:
+        st.error(f"Gagal memproses file {filepath}. Error: {e}")
         return None
 
 # ==========================================
-# 3. SIDEBAR & NAVIGASI PENGGUNA
+# 3. SIDEBAR
 # ==========================================
-# Logo TNI AU (Bisa diganti URL logo Lanud RSN jika ada)
 st.sidebar.image("https://upload.wikimedia.org/wikipedia/commons/e/e0/Lambang_TNI_AU.png", width=100)
 st.sidebar.title("Command Center")
 st.sidebar.markdown("**Lanud Roesmin Nurjadin**")
@@ -51,125 +60,112 @@ st.sidebar.markdown("---")
 
 menu = st.sidebar.radio(
     "PILIH MODUL OPERASIONAL:",
-    ("📊 Data Historis Cuaca (2021-2025)", "📤 Analisis Data Manual (ACS)")
+    ("📊 Data Historis Cuaca", "📤 Analisis Data Manual")
 )
 
 # ==========================================
-# 4. LOGIKA HALAMAN UTAMA
+# 4. MODUL: DATA HISTORIS CUACA
 # ==========================================
 st.title("Sistem Informasi Cuaca & Operasional")
 st.markdown("Pangkalan TNI AU Roesmin Nurjadin (RSN)")
 
-if menu == "📊 Data Historis Cuaca (2021-2025)":
+if menu == "📊 Data Historis Cuaca":
     st.subheader("Analisis Data Historis (2021 - 2025)")
-    st.info("Pilih jenis data pada menu di bawah untuk melihat visualisasi pergerakan cuaca.")
     
-    # Membaca isi folder 'data'
     data_folder = "data"
     if os.path.exists(data_folder):
         files = [f for f in os.listdir(data_folder) if f.endswith('.xlsx')]
         
         if len(files) > 0:
-            # Dropdown pilihan file
             selected_file = st.selectbox("Pilih Parameter Data:", files)
             file_path = os.path.join(data_folder, selected_file)
             
-            # Load Data
             df = load_local_data(file_path)
             
             if df is not None and not df.empty:
-                # Tampilkan Data Tabular & Grafik
                 tab1, tab2 = st.tabs(["📈 Grafik Interaktif", "🗃️ Tabel Data Mentah"])
                 
                 with tab1:
-                    # Asumsi dinamis: Kolom 1 adalah index (misal: Tahun/Bulan), sisanya adalah value
-                    kolom_x = df.columns[0]
-                    kolom_y = st.multiselect(
-                        "Pilih variabel untuk ditampilkan di grafik:", 
-                        df.columns[1:], 
-                        default=df.columns[1:].tolist()
-                    )
-                    
-                    if kolom_y:
-                        # Membuat grafik garis interaktif (Line Chart)
-                        fig = px.line(
-                            df, 
-                            x=kolom_x, 
-                            y=kolom_y, 
-                            markers=True,
-                            title=f"Tren Visualisasi: {selected_file.replace('.xlsx', '')}",
-                            template="plotly_white"
+                    try:
+                        kolom_x = df.columns[0]
+                        kolom_y = st.multiselect(
+                            "Pilih variabel untuk grafik:", 
+                            df.columns[1:], 
+                            default=df.columns[1:2].tolist() # Tampilkan 1 garis dulu agar aman
                         )
-                        # Kustomisasi Layout Grafik
-                        fig.update_layout(
-                            legend_title_text='Parameter',
-                            hovermode="x unified",
-                            xaxis_title=str(kolom_x).capitalize(),
-                            yaxis_title="Nilai/Jumlah"
-                        )
-                        st.plotly_chart(fig, use_container_width=True)
-                    else:
-                        st.warning("Silakan pilih minimal satu variabel untuk menampilkan grafik.")
+                        
+                        if kolom_y:
+                            fig = px.line(
+                                df, x=kolom_x, y=kolom_y, markers=True,
+                                title=f"Tren: {selected_file}",
+                                template="plotly_white"
+                            )
+                            fig.update_layout(hovermode="x unified")
+                            st.plotly_chart(fig, use_container_width=True)
+                        else:
+                            st.warning("Pilih minimal satu variabel.")
+                    except Exception as e:
+                        st.error(f"Gagal membuat grafik. Pastikan isi kolom berupa angka. Detail Error: {e}")
                 
                 with tab2:
-                    # Mengubah df ke string agar bebas dari error PyArrow tipe data campuran
-                    st.dataframe(df.astype(str))
-                    
+                    try:
+                        st.dataframe(df)
+                    except Exception as e:
+                        st.error("PyArrow gagal membaca tabel. Menampilkan mode fallback:")
+                        # Mode aman jika dataframe modern crash
+                        st.table(df.head(50).astype(str))
+                        
             else:
-                st.error("Gagal membaca file atau file kosong. Pastikan format Excel sudah benar.")
+                st.warning("Data kosong atau tidak dapat dibaca.")
         else:
-            st.warning("Tidak ada file Excel (.xlsx) di dalam folder 'data'.")
+            st.warning("Tidak ada file Excel (.xlsx) di folder 'data'.")
     else:
-        st.error("Folder 'data' tidak ditemukan di dalam repository. Pastikan huruf besar/kecilnya sama (harus 'data').")
+        st.error("Folder 'data' tidak ditemukan. Pastikan namanya huruf kecil 'data' di GitHub.")
 
 # ==========================================
-# 5. HALAMAN UPLOAD MANUAL (FILE ACS)
+# 5. MODUL: UPLOAD MANUAL
 # ==========================================
-elif menu == "📤 Analisis Data Manual (ACS)":
+elif menu == "📤 Analisis Data Manual":
     st.subheader("Modul Analisis Berkas Mandiri")
-    st.markdown("Fasilitas ini digunakan untuk mengunggah dan menganalisis laporan/data operasional secara *real-time*.")
     
-    # Widget Upload
-    uploaded_file = st.file_uploader("Unggah File Data ACS (Format: .xlsx, .xls, .csv)", type=['xlsx', 'xls', 'csv'])
+    uploaded_file = st.file_uploader("Unggah File Data (.xlsx, .csv)", type=['xlsx', 'csv'])
     
     if uploaded_file is not None:
         try:
-            # Deteksi format file
             if uploaded_file.name.endswith('.csv'):
                 df_upload = pd.read_csv(uploaded_file)
             else:
-                df_upload = pd.read_excel(uploaded_file)
+                df_upload = pd.read_excel(uploaded_file, engine='openpyxl')
+                
+            df_upload = clean_dataframe(df_upload)
+            st.success("File berhasil dimuat!")
             
-            # Pastikan nama kolom berformat string
-            df_upload.columns = df_upload.columns.astype(str)
-            
-            st.success(f"File '{uploaded_file.name}' berhasil dimuat!")
-            
-            # Layout dinamis
             col1, col2 = st.columns([1, 2])
             
             with col1:
                 st.write("**Pratinjau Data:**")
-                # Mengubah head ke string untuk mencegah error PyArrow
-                st.dataframe(df_upload.head(15).astype(str))
+                try:
+                    st.dataframe(df_upload.head(20))
+                except:
+                    st.table(df_upload.head(10).astype(str))
                 
             with col2:
                 st.write("**Pengaturan Visualisasi:**")
                 all_columns = df_upload.columns.tolist()
                 
-                # Pemilihan axis dinamis oleh user
-                x_axis = st.selectbox("Pilih Kolom Sumbu X (Horizontal):", all_columns)
-                y_axis = st.selectbox("Pilih Kolom Sumbu Y (Vertikal):", all_columns, index=1 if len(all_columns)>1 else 0)
-                jenis_grafik = st.radio("Pilih Jenis Grafik:", ["Garis (Line)", "Batang (Bar)"], horizontal=True)
+                x_axis = st.selectbox("Sumbu X (Horizontal):", all_columns)
+                y_axis = st.selectbox("Sumbu Y (Vertikal):", all_columns, index=1 if len(all_columns)>1 else 0)
+                jenis_grafik = st.radio("Jenis Grafik:", ["Garis (Line)", "Batang (Bar)"], horizontal=True)
                 
                 if st.button("Buat Grafik"):
-                    if jenis_grafik == "Garis (Line)":
-                        fig_up = px.line(df_upload, x=x_axis, y=y_axis, markers=True, template="plotly_white")
-                    else:
-                        fig_up = px.bar(df_upload, x=x_axis, y=y_axis, template="plotly_white")
+                    try:
+                        if jenis_grafik == "Garis (Line)":
+                            fig_up = px.line(df_upload, x=x_axis, y=y_axis, markers=True, template="plotly_white")
+                        else:
+                            fig_up = px.bar(df_upload, x=x_axis, y=y_axis, template="plotly_white")
+                        st.plotly_chart(fig_up, use_container_width=True)
+                    except Exception as e:
+                        st.error(f"Grafik gagal dibuat. Pastikan sumbu Y adalah angka. Detail: {e}")
                         
-                    fig_up.update_layout(title=f"Grafik {y_axis} berdasarkan {x_axis}")
-                    st.plotly_chart(fig_up, use_container_width=True)
-                    
         except Exception as e:
-            st.error(f"Terjadi kesalahan saat membaca file. Pastikan format data valid. Error: {e}")
+            st.error(f"Sistem gagal membaca file. Error: {e}")
